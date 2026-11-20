@@ -1,5 +1,5 @@
 const STORE_URL = 'https://script.google.com/macros/s/AKfycbxBLNBLZ9iX23cb1IKqpF7144eqlnSwK1zz3bKPt9Vzy7ICXgyKGKEMfnMVhmRcr5HP/exec';
-const APP = '급식이';
+const APP = 'today_meal';
 
 export interface StoreItem<T = Record<string, any>> {
   id: string;

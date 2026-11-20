@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { DayMeals, DishCategory, MealService, MealTypeFilter } from '../types';
 import { ALLERGY_MAP } from '../data/allergies';
 import { Flame, Info, Utensils, AlertTriangle, Sparkles, Star, ThumbsUp } from 'lucide-react';
@@ -13,6 +13,9 @@ interface DayMealCardProps {
   getMealLikeCount: (dateStr: string, mealCode: '1' | '2' | '3') => number;
   onLikeMeal: (dayMeal: DayMeals, meal: MealService) => void;
   likingMealKey?: string | null;
+  getMealRatingStats: (dateStr: string, mealCode: '1' | '2' | '3') => { average: number; count: number };
+  onRateMeal: (dayMeal: DayMeals, meal: MealService, score: number) => void;
+  ratingMealKey?: string | null;
 }
 
 const CATEGORY_COLORS: Record<DishCategory, { bg: string; text: string; label: string }> = {
@@ -34,8 +37,12 @@ export const DayMealCard: React.FC<DayMealCardProps> = ({
   getMealLikeCount,
   onLikeMeal,
   likingMealKey,
+  getMealRatingStats,
+  onRateMeal,
+  ratingMealKey,
 }) => {
   const { displayDate, dayOfWeek, isToday, breakfast, lunch, dinner } = dayMeal;
+  const [hoverScoreMap, setHoverScoreMap] = useState<Record<string, number>>({});
 
   const mealsToRender: MealService[] = [];
   if (selectedMealType === 'all') {
@@ -123,9 +130,13 @@ export const DayMealCard: React.FC<DayMealCardProps> = ({
                 });
               });
 
+              const mealKey = `${dayMeal.dateStr}-${meal.mealCode}`;
               const mealFav = isFavoriteMeal(dayMeal.dateStr, meal.mealCode);
               const likeCount = getMealLikeCount(dayMeal.dateStr, meal.mealCode);
-              const isLiking = likingMealKey === `${dayMeal.dateStr}-${meal.mealCode}`;
+              const isLiking = likingMealKey === mealKey;
+              const ratingStats = getMealRatingStats(dayMeal.dateStr, meal.mealCode);
+              const isRating = ratingMealKey === mealKey;
+              const hoverScore = hoverScoreMap[mealKey] || 0;
 
               return (
                 <div key={`${meal.date}-${meal.mealCode}`} className="space-y-2.5">
@@ -204,8 +215,55 @@ export const DayMealCard: React.FC<DayMealCardProps> = ({
                     })}
                   </ul>
 
+                  {/* Meal Rating (급식 평가하기 1~5점) */}
+                  <div className="p-2 rounded-xl bg-slate-50/90 border border-slate-200/70 space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-semibold text-slate-700">급식 평가하기</span>
+                      <span className="font-bold text-amber-700">
+                        {ratingStats.count > 0
+                          ? `★ ${ratingStats.average.toFixed(1)} (${ratingStats.count}명)`
+                          : '첫 평가 남기기'}
+                      </span>
+                    </div>
+                    <div
+                      className="flex items-center justify-between gap-1"
+                      onMouseLeave={() =>
+                        setHoverScoreMap((prev) => ({ ...prev, [mealKey]: 0 }))
+                      }
+                    >
+                      {[1, 2, 3, 4, 5].map((score) => {
+                        const active =
+                          hoverScore > 0
+                            ? score <= hoverScore
+                            : score <= Math.round(ratingStats.average);
+                        return (
+                          <button
+                            key={`rate-${mealKey}-${score}`}
+                            type="button"
+                            disabled={isRating}
+                            onMouseEnter={() =>
+                              setHoverScoreMap((prev) => ({ ...prev, [mealKey]: score }))
+                            }
+                            onClick={() => onRateMeal(dayMeal, meal, score)}
+                            className="flex-1 py-1 rounded-lg hover:bg-amber-50 flex items-center justify-center transition-colors disabled:opacity-50"
+                            title={`${score}점 평가하기`}
+                            aria-label={`${score}점 평가`}
+                          >
+                            <Star
+                              className={`w-4 h-4 transition-transform hover:scale-110 ${
+                                active
+                                  ? 'fill-amber-400 text-amber-500'
+                                  : 'text-slate-300'
+                              }`}
+                            />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   {/* Meal Actions: Favorite + Like Vote + Details */}
-                  <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                  <div className="pt-1 space-y-1.5">
                     <div className="flex items-center gap-1.5">
                       <button
                         type="button"

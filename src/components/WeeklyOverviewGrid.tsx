@@ -17,6 +17,9 @@ interface WeeklyOverviewGridProps {
   getMealLikeCount: (dateStr: string, mealCode: '1' | '2' | '3') => number;
   onLikeMeal: (dayMeal: DayMeals, meal: MealService) => void;
   likingMealKey?: string | null;
+  getMealRatingStats: (dateStr: string, mealCode: '1' | '2' | '3') => { average: number; count: number };
+  onRateMeal: (dayMeal: DayMeals, meal: MealService, score: number) => void;
+  ratingMealKey?: string | null;
 }
 
 export const WeeklyOverviewGrid: React.FC<WeeklyOverviewGridProps> = ({
@@ -32,6 +35,9 @@ export const WeeklyOverviewGrid: React.FC<WeeklyOverviewGridProps> = ({
   getMealLikeCount,
   onLikeMeal,
   likingMealKey,
+  getMealRatingStats,
+  onRateMeal,
+  ratingMealKey,
 }) => {
   const todayIndex = dayMeals.findIndex((d) => d.isToday);
   const [selectedDayTab, setSelectedDayTab] = useState<number>(
@@ -83,6 +89,9 @@ export const WeeklyOverviewGrid: React.FC<WeeklyOverviewGridProps> = ({
                 getMealLikeCount={getMealLikeCount}
                 onLikeMeal={onLikeMeal}
                 likingMealKey={likingMealKey}
+                getMealRatingStats={getMealRatingStats}
+                onRateMeal={onRateMeal}
+                ratingMealKey={ratingMealKey}
               />
             </motion.div>
           ))}
@@ -144,6 +153,9 @@ export const WeeklyOverviewGrid: React.FC<WeeklyOverviewGridProps> = ({
                   getMealLikeCount={getMealLikeCount}
                   onLikeMeal={onLikeMeal}
                   likingMealKey={likingMealKey}
+                  getMealRatingStats={getMealRatingStats}
+                  onRateMeal={onRateMeal}
+                  ratingMealKey={ratingMealKey}
                 />
               )}
             </motion.div>

@@ -11,6 +11,7 @@ import {
   Trash2,
   Check,
   X,
+  Star,
 } from 'lucide-react';
 
 interface CommunityPageProps {
@@ -20,13 +21,13 @@ interface CommunityPageProps {
   storeError: string | null;
   currentUser: string | null;
   onRefreshStore: () => Promise<void>;
-  onStoreError: (msg: string | null) => void;
+  onStoreError: (err: any, requiresLogin?: boolean) => void;
 }
 
 const POLL_CHOICES = [
   '메인 요리가 제일 좋아요',
   '따뜻한 국·찌개가 최고예요',
-  '디저트·음료가 기다려져요',
+  '디저트·과일이 최고예요',
   '다음 주 특식 기대해요',
 ];
 
@@ -44,6 +45,19 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({
   const [votingChoice, setVotingChoice] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
+
+  // Rating summary for current school (type: 'rating')
+  const schoolRatingSummary = useMemo(() => {
+    const ratings = storeItems.filter(
+      (item) =>
+        item.data?.type === 'rating' &&
+        item.data?.schoolCode === currentSchool.SD_SCHUL_CODE &&
+        typeof item.data?.score === 'number'
+    );
+    if (ratings.length === 0) return { average: 0, count: 0 };
+    const total = ratings.reduce((sum, item) => sum + Number(item.data.score), 0);
+    return { average: total / ratings.length, count: ratings.length };
+  }, [storeItems, currentSchool.SD_SCHUL_CODE]);
 
   // Count poll votes from store items (type: 'vote')
   const voteCounts = useMemo(() => {
@@ -89,7 +103,7 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({
       });
       await onRefreshStore();
     } catch (err: any) {
-      onStoreError(err?.message || '투표를 저장하지 못했어요.');
+      onStoreError(err, false);
     } finally {
       setVotingChoice(null);
     }
@@ -114,7 +128,7 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({
       setPostText('');
       await onRefreshStore();
     } catch (err: any) {
-      onStoreError(err?.message || '글을 저장하지 못했어요.');
+      onStoreError(err, false);
     } finally {
       setIsSubmitting(false);
     }
@@ -136,7 +150,7 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({
       setEditText('');
       await onRefreshStore();
     } catch (err: any) {
-      onStoreError(err?.message || '글을 수정하지 못했어요.');
+      onStoreError(err, true);
     }
   };
 
@@ -146,7 +160,7 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({
       await store('delete', { id });
       await onRefreshStore();
     } catch (err: any) {
-      onStoreError(err?.message || '글을 지우지 못했어요.');
+      onStoreError(err, true);
     }
   };
 
@@ -160,7 +174,7 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({
             <h2 className="text-lg font-bold text-slate-900">급식 소통·투표</h2>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            이번 주 급식에서 기대되는 메뉴에 투표하고 짧은 한줄평을 나눠 보세요.
+            이번 주 급식 평점과 인기 투표를 확인하고 자유롭게 의견을 나눠 보세요.
           </p>
         </div>
 
@@ -182,6 +196,33 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({
           <span>{storeError}</span>
         </div>
       )}
+
+      {/* School Meal Rating Summary */}
+      <section className="bg-white rounded-2xl border border-slate-200/90 shadow-xs p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-11 h-11 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-500 shrink-0">
+            <Star className="w-6 h-6 fill-amber-400" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">
+              {currentSchool.SCHUL_NM} 누적 급식 평점
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              각 요일 급식 카드의 별점 평가(1~5점)가 합산됩니다.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 bg-amber-50/80 border border-amber-200 px-4 py-2 rounded-xl self-start sm:self-auto">
+          <span className="text-lg font-extrabold text-amber-700">
+            {schoolRatingSummary.count > 0
+              ? `★ ${schoolRatingSummary.average.toFixed(1)}`
+              : '★ -.-'}
+          </span>
+          <span className="text-xs font-semibold text-amber-900">
+            ({schoolRatingSummary.count}명 평가)
+          </span>
+        </div>
+      </section>
 
       {/* Poll Section (type: 'vote') */}
       <section className="bg-white rounded-2xl border border-slate-200/90 shadow-xs p-5 space-y-4">
@@ -230,7 +271,7 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({
       {/* Post Board Section (type: 'post') */}
       <section className="bg-white rounded-2xl border border-slate-200/90 shadow-xs p-5 space-y-4">
         <h3 className="text-sm font-bold text-slate-900">
-          급식 한줄평 ({posts.length})
+          급식 응원·추천 메모 ({posts.length})
         </h3>
 
         <form onSubmit={handleAddPost} className="space-y-1.5">
@@ -240,7 +281,7 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({
               value={postText}
               onChange={(e) => setPostText(e.target.value)}
               maxLength={120}
-              placeholder={`${currentSchool.SCHUL_NM} 급식에 대한 한줄평을 남겨 보세요`}
+              placeholder={`${currentSchool.SCHUL_NM} 급식에 대한 응원을 남겨 보세요`}
               className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-hidden focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500"
             />
             <button
@@ -259,11 +300,11 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({
 
         {storeLoading && posts.length === 0 ? (
           <div className="py-8 text-center text-xs text-slate-400">
-            저장소에서 한줄평을 불러오는 중...
+            저장소에서 글을 불러오는 중...
           </div>
         ) : posts.length === 0 ? (
           <div className="py-8 text-center text-xs text-slate-400 bg-slate-50/70 rounded-xl border border-dashed border-slate-200">
-            아직 남겨진 한줄평이 없어요. 첫 번째 한줄평을 작성해 보세요!
+            아직 남겨진 글이 없어요. 첫 번째 글을 작성해 보세요!
           </div>
         ) : (
           <ul className="space-y-2.5">

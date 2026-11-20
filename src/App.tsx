@@ -20,13 +20,15 @@ import {
   getMonday,
 } from './utils/dateUtils';
 import { fetchSchoolMeals } from './services/neisApi';
-import { getToken, store, StoreItem } from './services/store';
+import { setToken, store, StoreItem } from './services/store';
 import { Header } from './components/Header';
 import { WeekNavigator } from './components/WeekNavigator';
 import { WeeklyOverviewGrid } from './components/WeeklyOverviewGrid';
 import { SchoolSearchModal } from './components/SchoolSearchModal';
 import { AllergyModal } from './components/AllergyModal';
 import { MealDetailModal } from './components/MealDetailModal';
+import { AuthModal } from './components/AuthModal';
+import { MealReviewsSection } from './components/MealReviewsSection';
 import { FavoritesPage } from './components/FavoritesPage';
 import { CommunityPage } from './components/CommunityPage';
 import { FaqHelperPage } from './components/FaqHelperPage';
@@ -102,24 +104,47 @@ export default function App() {
     return [];
   });
 
-  // 5. Store state (내 저장소)
+  // 5. Store & Auth state
   const [storeItems, setStoreItems] = useState<StoreItem[]>([]);
+  const [privateItems, setPrivateItems] = useState<StoreItem[]>([]);
   const [storeLoading, setStoreLoading] = useState<boolean>(false);
   const [storeError, setStoreError] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [likingMealKey, setLikingMealKey] = useState<string | null>(null);
+  const [ratingMealKey, setRatingMealKey] = useState<string | null>(null);
   const [recommendingSchool, setRecommendingSchool] = useState<boolean>(false);
 
   // 6. Modals & Notifications
   const [isSchoolSearchOpen, setIsSchoolSearchOpen] = useState(false);
   const [isAllergyModalOpen, setIsAllergyModalOpen] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authModalError, setAuthModalError] = useState<string | null>(null);
   const [detailModal, setDetailModal] = useState<{
     meal: MealService;
     dayText: string;
   } | null>(null);
   const [copied, setCopied] = useState(false);
 
-  // Load store items (called ONLY on app mount, after saving, or on manual refresh)
+  // Centralized Store error handler (Rule 8)
+  const handleStoreError = useCallback((err: any, requiresLogin = false) => {
+    if (!err) {
+      setStoreError(null);
+      return;
+    }
+    const msg = typeof err === 'string' ? err : err?.message || '오류가 발생했어요.';
+    setStoreError(msg);
+    if (err?.code === 'login') {
+      setCurrentUser(null);
+      setPrivateItems([]);
+      setToken(null);
+      if (requiresLogin) {
+        setAuthModalError(msg);
+        setIsAuthModalOpen(true);
+      }
+    }
+  }, []);
+
+  // Load public store items (called ONLY on app mount, after saving, or on manual refresh)
   const loadStoreList = useCallback(async () => {
     setStoreLoading(true);
     setStoreError(null);
@@ -127,25 +152,67 @@ export default function App() {
       const res = await store('list');
       setStoreItems(Array.isArray(res?.items) ? res.items : []);
     } catch (err: any) {
-      setStoreError(err?.message || '저장소에서 데이터를 불러오지 못했어요.');
+      handleStoreError(err, false);
     } finally {
       setStoreLoading(false);
     }
-  }, []);
+  }, [handleStoreError]);
 
-  useEffect(() => {
-    // Check optional existing token silently without forcing login
-    if (getToken()) {
-      store('me')
-        .then((res) => {
-          if (res?.name) setCurrentUser(String(res.name));
-        })
-        .catch(() => {
-          setCurrentUser(null);
-        });
+  // Load private store items (`mine: true`) when logged in
+  const loadPrivateStoreList = useCallback(async () => {
+    try {
+      const res = await store('list', { mine: true });
+      setPrivateItems(Array.isArray(res?.items) ? res.items : []);
+    } catch (err: any) {
+      handleStoreError(err, true);
     }
+  }, [handleStoreError]);
+
+  // Startup auth check with store('me') (Rule 5: if it fails, stay logged-out without opening modal)
+  useEffect(() => {
+    let active = true;
+    store('me')
+      .then((res) => {
+        if (!active) return;
+        if (res?.name) {
+          setCurrentUser(String(res.name));
+          loadPrivateStoreList();
+        } else {
+          setCurrentUser(null);
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+        setCurrentUser(null);
+        setPrivateItems([]);
+      });
+
     loadStoreList();
-  }, [loadStoreList]);
+    return () => {
+      active = false;
+    };
+  }, [loadStoreList, loadPrivateStoreList]);
+
+  const handleAuthSuccess = useCallback(
+    async (name: string) => {
+      setCurrentUser(name);
+      setAuthModalError(null);
+      setStoreError(null);
+      await Promise.all([loadStoreList(), loadPrivateStoreList()]);
+    },
+    [loadStoreList, loadPrivateStoreList]
+  );
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await store('logout');
+    } catch {
+      // Clear local session state regardless
+    }
+    setCurrentUser(null);
+    setPrivateItems([]);
+    setStoreError(null);
+  }, []);
 
   // Calculate week dates (Mon ~ Fri)
   const weekDates = useMemo(() => getWeekDates(targetDate, false), [targetDate]);
@@ -267,7 +334,7 @@ export default function App() {
     });
   }, []);
 
-  // Recommend favorite school to shared store (type: 'favorite_school')
+  // Recommend favorite school to shared store
   const handleRecommendFavoriteSchool = useCallback(
     async (school: SchoolInfo) => {
       setRecommendingSchool(true);
@@ -284,12 +351,12 @@ export default function App() {
         });
         await loadStoreList();
       } catch (err: any) {
-        setStoreError(err?.message || '즐겨찾기 추천을 저장하지 못했어요.');
+        handleStoreError(err, false);
       } finally {
         setRecommendingSchool(false);
       }
     },
-    [loadStoreList]
+    [loadStoreList, handleStoreError]
   );
 
   // Favorite meal toggle (localStorage)
@@ -348,7 +415,7 @@ export default function App() {
     });
   }, []);
 
-  // Meal like vote via store('add', { data: { type: 'vote', ... } })
+  // Meal like vote
   const getMealLikeCount = useCallback(
     (dateStr: string, mealCode: '1' | '2' | '3') => {
       return storeItems.filter(
@@ -381,12 +448,57 @@ export default function App() {
         });
         await loadStoreList();
       } catch (err: any) {
-        setStoreError(err?.message || '좋아요를 저장하지 못했어요.');
+        handleStoreError(err, false);
       } finally {
         setLikingMealKey(null);
       }
     },
-    [currentSchool, loadStoreList]
+    [currentSchool, loadStoreList, handleStoreError]
+  );
+
+  // Meal rating (급식 평가하기 1~5점)
+  const getMealRatingStats = useCallback(
+    (dateStr: string, mealCode: '1' | '2' | '3') => {
+      const matched = storeItems.filter(
+        (item) =>
+          item.data?.type === 'rating' &&
+          item.data?.schoolCode === currentSchool.SD_SCHUL_CODE &&
+          item.data?.dateStr === dateStr &&
+          item.data?.mealCode === mealCode &&
+          typeof item.data?.score === 'number'
+      );
+      if (matched.length === 0) return { average: 0, count: 0 };
+      const sum = matched.reduce((acc, cur) => acc + Number(cur.data.score), 0);
+      return { average: sum / matched.length, count: matched.length };
+    },
+    [storeItems, currentSchool]
+  );
+
+  const handleRateMeal = useCallback(
+    async (dayMeal: DayMeals, meal: MealService, score: number) => {
+      const key = `${dayMeal.dateStr}-${meal.mealCode}`;
+      setRatingMealKey(key);
+      setStoreError(null);
+      try {
+        await store('add', {
+          data: {
+            type: 'rating',
+            score,
+            schoolCode: currentSchool.SD_SCHUL_CODE,
+            schoolName: currentSchool.SCHUL_NM,
+            dateStr: dayMeal.dateStr,
+            mealCode: meal.mealCode,
+            mealName: meal.mealName,
+          },
+        });
+        await loadStoreList();
+      } catch (err: any) {
+        handleStoreError(err, false);
+      } finally {
+        setRatingMealKey(null);
+      }
+    },
+    [currentSchool, loadStoreList, handleStoreError]
   );
 
   // Allergy handlers
@@ -429,7 +541,7 @@ export default function App() {
   // Share / Copy meals summary
   const handleShareMeals = useCallback(() => {
     const lines: string[] = [
-      `🍱 [${currentSchool.SCHUL_NM}] 이번 주 급식 식단표 (${weekRangeText})`,
+      `🍱 [today_meal · ${currentSchool.SCHUL_NM}] 이번 주 급식 식단표 (${weekRangeText})`,
       '',
     ];
 
@@ -486,6 +598,12 @@ export default function App() {
           onShareMeals={handleShareMeals}
           copied={copied}
           favoritesCount={favoriteSchools.length + favoriteMeals.length}
+          currentUser={currentUser}
+          onOpenAuthModal={() => {
+            setAuthModalError(null);
+            setIsAuthModalOpen(true);
+          }}
+          onLogout={handleLogout}
         />
 
         {/* Main Content Area */}
@@ -495,7 +613,7 @@ export default function App() {
               path="/"
               element={
                 <>
-                  {/* Store Error Banner on main view if any vote fails */}
+                  {/* Store Error Banner on main view */}
                   {storeError && (
                     <div className="mb-4 p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
@@ -587,10 +705,28 @@ export default function App() {
                     getMealLikeCount={getMealLikeCount}
                     onLikeMeal={handleLikeMeal}
                     likingMealKey={likingMealKey}
+                    getMealRatingStats={getMealRatingStats}
+                    onRateMeal={handleRateMeal}
+                    ratingMealKey={ratingMealKey}
+                  />
+
+                  {/* Bottom One-line Reviews Section (한 줄 후기) */}
+                  <MealReviewsSection
+                    currentSchool={currentSchool}
+                    currentUser={currentUser}
+                    storeItems={storeItems}
+                    storeLoading={storeLoading}
+                    storeError={storeError}
+                    onRefreshStore={loadStoreList}
+                    onStoreError={handleStoreError}
+                    onOpenAuthModal={() => {
+                      setAuthModalError(null);
+                      setIsAuthModalOpen(true);
+                    }}
                   />
 
                   {/* Nutritional & Helper Guide Banner */}
-                  <div className="mt-8 p-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-slate-600">
+                  <div className="mt-6 p-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-slate-600">
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
                         <Sparkles className="w-4 h-4" />
@@ -630,18 +766,26 @@ export default function App() {
               element={
                 <FavoritesPage
                   currentSchool={currentSchool}
+                  currentUser={currentUser}
                   favoriteSchools={favoriteSchools}
                   onSelectSchool={handleSelectSchool}
                   onToggleFavoriteSchool={handleToggleFavoriteSchool}
                   favoriteMeals={favoriteMeals}
                   onRemoveFavoriteMeal={handleRemoveFavoriteMeal}
                   storeItems={storeItems}
+                  privateItems={privateItems}
                   storeLoading={storeLoading}
                   storeError={storeError}
                   onRefreshStore={loadStoreList}
+                  onRefreshPrivateStore={loadPrivateStoreList}
                   onRecommendFavoriteSchool={handleRecommendFavoriteSchool}
                   recommendingSchool={recommendingSchool}
                   onOpenSchoolSearch={() => setIsSchoolSearchOpen(true)}
+                  onOpenAuthModal={() => {
+                    setAuthModalError(null);
+                    setIsAuthModalOpen(true);
+                  }}
+                  onStoreError={handleStoreError}
                 />
               }
             />
@@ -656,7 +800,7 @@ export default function App() {
                   storeError={storeError}
                   currentUser={currentUser}
                   onRefreshStore={loadStoreList}
-                  onStoreError={setStoreError}
+                  onStoreError={handleStoreError}
                 />
               }
             />
@@ -668,7 +812,7 @@ export default function App() {
         {/* Footer */}
         <footer className="mt-auto py-6 border-t border-slate-200/80 bg-white text-center text-xs text-slate-500">
           <div className="max-w-6xl mx-auto px-4">
-            <p className="font-medium text-slate-700">이번 주 급식 알리미</p>
+            <p className="font-medium text-slate-700">today_meal · 이번 주 급식 알리미</p>
             <p className="text-[11px] text-slate-400 mt-1">
               본 서비스는 교육부 나이스(NEIS) 오픈 API를 통해 공공데이터를 실시간 제공합니다.
             </p>
@@ -676,6 +820,16 @@ export default function App() {
         </footer>
 
         {/* Modals */}
+        <AuthModal
+          isOpen={isAuthModalOpen}
+          onClose={() => {
+            setIsAuthModalOpen(false);
+            setAuthModalError(null);
+          }}
+          onAuthSuccess={handleAuthSuccess}
+          initialError={authModalError}
+        />
+
         <SchoolSearchModal
           isOpen={isSchoolSearchOpen}
           onClose={() => setIsSchoolSearchOpen(false)}

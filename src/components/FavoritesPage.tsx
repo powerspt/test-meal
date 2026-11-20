@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FavoriteMeal, SchoolInfo } from '../types';
-import { StoreItem } from '../services/store';
+import { StoreItem, store } from '../services/store';
 import {
   Star,
   School,
@@ -13,42 +13,67 @@ import {
   ArrowRight,
   Sparkles,
   Plus,
+  Lock,
+  LogIn,
+  Send,
 } from 'lucide-react';
 
 interface FavoritesPageProps {
   currentSchool: SchoolInfo;
+  currentUser: string | null;
   favoriteSchools: SchoolInfo[];
   onSelectSchool: (school: SchoolInfo) => void;
   onToggleFavoriteSchool: (school: SchoolInfo) => void;
   favoriteMeals: FavoriteMeal[];
   onRemoveFavoriteMeal: (id: string) => void;
   storeItems: StoreItem[];
+  privateItems: StoreItem[];
   storeLoading: boolean;
   storeError: string | null;
-  onRefreshStore: () => void;
+  onRefreshStore: () => Promise<void>;
+  onRefreshPrivateStore: () => Promise<void>;
   onRecommendFavoriteSchool: (school: SchoolInfo) => Promise<void>;
   recommendingSchool: boolean;
   onOpenSchoolSearch: () => void;
+  onOpenAuthModal: () => void;
+  onStoreError: (err: any, requiresLogin?: boolean) => void;
 }
 
 export const FavoritesPage: React.FC<FavoritesPageProps> = ({
   currentSchool,
+  currentUser,
   favoriteSchools,
   onSelectSchool,
   onToggleFavoriteSchool,
   favoriteMeals,
   onRemoveFavoriteMeal,
   storeItems,
+  privateItems,
   storeLoading,
   storeError,
   onRefreshStore,
+  onRefreshPrivateStore,
   onRecommendFavoriteSchool,
   recommendingSchool,
   onOpenSchoolSearch,
+  onOpenAuthModal,
+  onStoreError,
 }) => {
   const navigate = useNavigate();
+  const [privateMemoText, setPrivateMemoText] = useState('');
+  const [savingPrivate, setSavingPrivate] = useState(false);
 
-  // Count shared favorite school rows from store('list')
+  const privateMemos = React.useMemo(() => {
+    return privateItems
+      .filter(
+        (item) =>
+          item.data?.type === 'private_memo' &&
+          typeof item.data?.text === 'string'
+      )
+      .slice()
+      .reverse();
+  }, [privateItems]);
+
   const sharedSchoolCounts = React.useMemo(() => {
     const map = new Map<
       string,
@@ -82,6 +107,47 @@ export const FavoritesPage: React.FC<FavoritesPageProps> = ({
     return Array.from(map.values()).sort((a, b) => b.count - a.count);
   }, [storeItems]);
 
+  const handleAddPrivateMemo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = privateMemoText.trim();
+    if (!trimmed) return;
+    if (!currentUser) {
+      onOpenAuthModal();
+      return;
+    }
+
+    setSavingPrivate(true);
+    try {
+      await store('add', {
+        data: {
+          type: 'private_memo',
+          schoolName: currentSchool.SCHUL_NM,
+          text: trimmed.slice(0, 120),
+        },
+        private: true,
+      });
+      setPrivateMemoText('');
+      await onRefreshPrivateStore();
+    } catch (err: any) {
+      onStoreError(err, true);
+    } finally {
+      setSavingPrivate(false);
+    }
+  };
+
+  const handleDeletePrivateMemo = async (id: string) => {
+    if (!currentUser) {
+      onOpenAuthModal();
+      return;
+    }
+    try {
+      await store('delete', { id });
+      await onRefreshPrivateStore();
+    } catch (err: any) {
+      onStoreError(err, true);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Page Title */}
@@ -107,7 +173,10 @@ export const FavoritesPage: React.FC<FavoritesPageProps> = ({
           </button>
           <button
             type="button"
-            onClick={onRefreshStore}
+            onClick={() => {
+              onRefreshStore();
+              if (currentUser) onRefreshPrivateStore();
+            }}
             disabled={storeLoading}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors disabled:opacity-50"
           >
@@ -125,7 +194,99 @@ export const FavoritesPage: React.FC<FavoritesPageProps> = ({
         </div>
       )}
 
-      {/* 1. Local Favorite Schools */}
+      {/* 1. Private Personal Meal Memo (나만 보기 - private: true / list mine: true) */}
+      <section className="bg-white rounded-2xl border border-slate-200/90 shadow-xs p-5 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Lock className="w-4 h-4 text-emerald-600 shrink-0" />
+            <h3 className="text-sm font-bold text-slate-900">
+              나만 보는 급식 메모 (나만 보기)
+            </h3>
+            <span className="text-[11px] text-slate-500">
+              다른 사용자에게는 안 보여요. 앱을 만든 사람은 저장소 시트에서 볼 수 있어요.
+            </span>
+          </div>
+        </div>
+
+        {currentUser ? (
+          <>
+            <form onSubmit={handleAddPrivateMemo} className="space-y-1.5">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={privateMemoText}
+                  onChange={(e) => setPrivateMemoText(e.target.value)}
+                  maxLength={120}
+                  placeholder="나만 기억할 급식 메모를 적어 보세요 (예: 금요일 떡볶이 꼭 먹기)"
+                  className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-hidden focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500"
+                />
+                <button
+                  type="submit"
+                  disabled={savingPrivate || !privateMemoText.trim()}
+                  className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50 shrink-0"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>{savingPrivate ? '저장 중' : '나만 보기 저장'}</span>
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                이름 · 학번 · 연락처는 쓰지 마세요
+              </p>
+            </form>
+
+            {privateMemos.length === 0 ? (
+              <div className="py-5 text-center text-xs text-slate-400 bg-slate-50/70 rounded-xl border border-dashed border-slate-200">
+                저장한 나만의 급식 메모가 없어요.
+              </div>
+            ) : (
+              <ul className="space-y-2">
+                {privateMemos.map((memo) => (
+                  <li
+                    key={memo.id}
+                    className="p-3 rounded-xl border border-emerald-100 bg-emerald-50/40 flex items-center justify-between gap-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                        <span className="font-semibold text-emerald-700">
+                          {String(memo.data.schoolName || '내 메모')}
+                        </span>
+                        <span>{memo.time ? String(memo.time).slice(0, 16) : ''}</span>
+                      </div>
+                      <p className="text-xs sm:text-sm text-slate-800 mt-0.5 break-words">
+                        {String(memo.data.text)}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleDeletePrivateMemo(memo.id)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors shrink-0"
+                      title="지우기"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        ) : (
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <p className="text-xs text-slate-600">
+              나만 보는 급식 메모는 닉네임 로그인 후 저장하고 불러올 수 있어요.
+            </p>
+            <button
+              type="button"
+              onClick={onOpenAuthModal}
+              className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors shrink-0"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              <span>로그인</span>
+            </button>
+          </div>
+        )}
+      </section>
+
+      {/* 2. Local Favorite Schools */}
       <section className="bg-white rounded-2xl border border-slate-200/90 shadow-xs p-5 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -195,7 +356,7 @@ export const FavoritesPage: React.FC<FavoritesPageProps> = ({
         )}
       </section>
 
-      {/* 2. Local Favorite Meals */}
+      {/* 3. Local Favorite Meals */}
       <section className="bg-white rounded-2xl border border-slate-200/90 shadow-xs p-5 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -260,7 +421,7 @@ export const FavoritesPage: React.FC<FavoritesPageProps> = ({
         )}
       </section>
 
-      {/* 3. Shared Store Favorite Schools */}
+      {/* 4. Shared Store Favorite Schools */}
       <section className="bg-white rounded-2xl border border-slate-200/90 shadow-xs p-5 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
